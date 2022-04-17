@@ -17,7 +17,7 @@ jobs:
 
   build_packages:
     name: Build ${{ github.event.client_payload.device || github.event.inputs.device }} packages
-    runs-on: ubuntu-18.04
+    runs-on: ubuntu-20.04
     env:
       DEVICE: ${{ github.event.client_payload.device || github.event.inputs.device }}
       BRANCH: ${{ github.event.client_payload.branch || github.event.inputs.branch }}
@@ -55,9 +55,9 @@ jobs:
           [ $BRANCH != 'master' ] && BRANCH='openwrt-18.06-k5.4'
           if [ -d 'lede/.git' ]; then
           cd lede && rm -f zerospace && git config --local user.email "action@github.com" && git config --local user.name "GitHub Action"
-          git fetch && git reset --hard origin/$BRANCH
+          git fetch && git reset --hard origin/$BRANCH && git clean -df
           else
-          sudo chown $USER:$(id -gn) lede && git clone -b $BRANCH --single-branch https://github.com/immortalwrt/immortalwrt lede
+          sudo chown $USER:$(id -gn) lede && git clone -b $BRANCH --single-branch https://github.com/coolsnowwolf/lede lede
           fi
 
       - name: Update feeds and packages
@@ -76,19 +76,19 @@ jobs:
           cd
           [ $BRANCH != 'master' ] && BRANCH='openwrt-18.06'
           svn export https://github.com/openwrt/luci/branches/$BRANCH luci
-          echo > more_luci.txt
           pushd luci
-          ls -d */ | xargs -n1 -i diff -q {} ../lede/feeds/luci/{} | grep Only | grep lede | grep -E applications\|themes | awk '{print $4}' | xargs -n1 -i echo CONFIG_PACKAGE_{}=m >> ~/lede/more_luci.txt
+          ls -d */ | xargs -n1 -i diff -q {} ../lede/feeds/luci/{} | grep Only | grep lede | grep -E applications\|themes | awk '{print $4}' | xargs -n1 -i echo CONFIG_PACKAGE_{}=m > ~/lede/more_luci.txt
           popd
 
       - name: Custom configure file
         run: |
-          cd ~/lede
+          cd ~/lede && rm -rf tmp/
           cat $GITHUB_WORKSPACE/$DEVICE.config.seed $GITHUB_WORKSPACE/common.seed | sed 's/\(CONFIG_PACKAGE_luci-app-[^A-Z]*=\)y/\1m/' > .config
           find package/ -type d -name luci-app-* | rev | cut -d'/' -f1 | rev | xargs -n1 -i echo CONFIG_PACKAGE_{}=m >> .config
           cat $GITHUB_WORKSPACE/extra_packages.seed >> .config
           cat more_luci.txt >> .config
-          make defconfig && cat .config
+          make defconfig && sed -i -E 's/# (CONFIG_.*_COMPRESS_UPX) is not set/\1=y/' .config && make defconfig
+          cat .config
 
       - name: Clean build cache
         if: ${{ github.event.client_payload.package_clean == 'true' || github.event.inputs.device != '' }}
@@ -98,10 +98,13 @@ jobs:
           make package/clean
           df -h .
       - name: Build and deploy packages
+        timeout-minutes: 1440
         run: |
+          ulimit -SHn 65000
           cd ~/lede
           while true; do make download -j && break || true; done
           make -j$[`nproc`+1] IGNORE_ERRORS=1
+          if [ ! -e ~/lede/bin/targets/*/*/*imagebuilder*xz ]; then make V=sc; fi
           mv `ls ~/lede/bin/targets/*/*/*imagebuilder*xz` ~/ib-$DEVICE.tar.xz
 
           echo "======================="
@@ -152,11 +155,6 @@ jobs:
           export AUTH="Authorization: token ${{ secrets.SEC_TOKEN }}"
           export cache_path='github.com/repos/klever1988/sshactions/releases'
           export cache_repo_id='39020554'
-          ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
-          echo $ret | jq -r '.assets[] | select(.name | contains ("'$DEVICE'.img")).id' | \
-          xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
-          echo $ret | jq -r '.assets[] | select(.name == "ib-'$DEVICE'.tar.xz").id' | \
-          xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
           #zstdmt -c --adapt --long lede.img | parallel --wc --block 1.99G --pipe \
           #'curl -s --data-binary @- -H "$AUTH" -H "Content-Type: application/octet-stream" https://uploads.$cache_path/$cache_repo_id/assets?name=lede.'$DEVICE'.img.zst.0{#} > /dev/null'
           zstdmt -c --long lede.img | split --numeric=1 -b 2000m - lede.$DEVICE.img.zst.
@@ -164,7 +162,18 @@ jobs:
           #do
           #  while true; do curl --data-binary @$f -H "$AUTH" -H 'Content-Type: application/octet-stream' "https://uploads.$cache_path/$cache_repo_id/assets?name=$f" && break || true; done
           #done
+          while true; do
+          ret=$(curl -sH "$AUTH" "https://api.$cache_path/tags/cache")
+          echo $ret | jq -r '.assets[] | select(.name | contains ("'$DEVICE'.img")).id' | \
+          xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
+          echo $ret | jq -r '.assets[] | select(.name == "ib-'$DEVICE'.tar.xz").id' | \
+          xargs -n1 -i curl -X DELETE -H "$AUTH" "https://api.$cache_path/assets/{}"
           ls *img.zst* ib-$DEVICE.tar.xz | parallel --wc 'while true; do curl -T {} -H "$AUTH" -H "Content-Type: application/octet-stream" "https://uploads.$cache_path/$cache_repo_id/assets?name={}" && break || true; done'
+          set +e
+          for i in {1..20}; do curl -sL --fail https://github.com/klever1988/sshactions/releases/download/cache/lede.$DEVICE.img.zst.0$i || break; done | zstdmt -d -o /dev/null
+          if [ $? -eq 0 ]; then break; fi
+          done
+          set -e
 
       - name: Send tg notification
         if: env.TG
@@ -248,7 +257,9 @@ jobs:
         run: |
           sudo apt update && sudo apt install qemu-utils
           sudo sysctl vm.swappiness=0
+          ulimit -SHn 65000
           curl -L https://github.com/klever1988/sshactions/releases/download/cache/ib-$DEVICE.tar.xz | tar -Jxvf -
+          set -x
           mv *imagebuilder* ib && cd ib
           . $GITHUB_WORKSPACE/scripts/merge_files.sh
           sed -i '/local/d;s/#//' files/etc/opkg/distfeeds.conf
