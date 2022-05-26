@@ -16,12 +16,16 @@ sed -i '/DEPENDS/ s/$/ +frpc/' `find package/ -follow -type f -path '*/luci-app-
 sed -i 's/ +ntfs-3g/ +ntfs3-mount/' `find package/ -follow -type f -path '*/automount/Makefile'`
 sed -i '/skip\=/ a skip=`mount | grep -q /dev/$device; echo $?`' `find package/ -follow -type f -path */automount/files/15-automount`
 
+sed -i 's/START=95/START=99/' `find package/ -follow -type f -path */ddns-scripts/files/ddns.init`
+
+sed -i 's/PKG_SOURCE_VERSION:=.*/PKG_SOURCE_VERSION:=master/' package/kernel/rtl8821cu/Makefile
+sed -i 's/PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/' package/kernel/rtl8821cu/Makefile
+
 mkdir -p `find package/ -follow -type d -path '*/pdnsd-alt'`/patches
 mv $GITHUB_WORKSPACE/patches/99-disallow-aaaa.patch `find package/ -follow -type d -path '*/pdnsd-alt'`/patches
 
 sed -i 's/5.0/1.0/' .ccache/ccache.conf || true
 
-sed -i 's/02b79d5e2b07b5e64cd28f1fe84395ee11eef95fc49fd923a9ab93022b148be6/skip/' package/feeds/packages/containerd/Makefile
 
 if [ $BRANCH == 'master' ]; then
 
@@ -88,7 +92,11 @@ if [[ $DEVICE == 'r1s' ]]; then
   git log --grep r1s -i | grep '^commit ' | head -n -2 | cut -d' ' -f2 | tac | xargs git show | sed '0,/UENV/s//ATF/' > r1s.diff
   git show 124116564e8a6081e79cb2e87b0d87b2af99c583 632c4c91e7640a354dc421fa324fd705b734252d 7fb1b00f5f6214bf7a29d3781d260a7e7c8547c9 >> r1s.diff
   cd ~/lede && chmod +x target/linux/sunxi/base-files/etc/board.d/* && git apply ~/immortalwrt/r1s.diff
-  echo "\nCONFIG_ARM_ALLWINNER_SUN50I_CPUFREQ_NVMEM=y\nCONFIG_ARM_SCPI_CPUFREQ=y" >> target/linux/sunxi/cortexa53/config-5.4
+  merge_package https://github.com/immortalwrt/immortalwrt/branches/openwrt-18.06-k5.4/package/emortal/autocore
 elif [[ $DEVICE == 'r2s' || $DEVICE == 'r2c' || $DEVICE == 'r1p' || $DEVICE == 'r1p-lts' ]]; then
   sed -i 's/5.15/5.4/g' target/linux/rockchip/Makefile
 fi
+
+# ...
+git revert d15af9ff7c534853695a52bb94f07beb4ffec02a
+sed -i 's/kmod-usb-net-rtl8152/kmod-usb-net-rtl8152-vendor/' target/linux/rockchip/image/armv8.mk target/linux/sunxi/image/cortexa53.mk target/linux/sunxi/image/cortexa7.mk
