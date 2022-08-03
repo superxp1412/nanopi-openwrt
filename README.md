@@ -1,4 +1,4 @@
-# Nanopi R1S R2S R2C R4S Openwrt 固件
+# Nanopi R1S R2S R2C R4S R5S X86 Openwrt 固件
 
 [刷机工具](https://www.balena.io/etcher/)  
 [下载地址](#下载地址)  
@@ -48,4 +48,6 @@ https://github.com/klever1988/nanopi-openwrt/blob/master/CHANGELOG.md
 <img src="https://raw.githubusercontent.com/klever1988/nanopi-openwrt/master/assets/NAT.jpg" width="450" />
 
 #### 固件源码：
+https://github.com/coolsnowwolf/lede
+
 https://github.com/immortalwrt/immortalwrt
